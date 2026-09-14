@@ -106,7 +106,26 @@ def build_vector_store(chunks, reset=True):
 
 
 def has_existing_vector_store():
-    return os.path.exists(CHROMA_DIR) and os.listdir(CHROMA_DIR)
+    """True only if the named collection actually contains documents.
+
+    Checking just for a non-empty CHROMA_DIR isn't enough: an older store
+    (or a differently-named collection left over after a schema change) can
+    make the folder non-empty while the collection this app expects is
+    empty, which silently produced a "ready" chatbot with zero retrievable
+    chunks.
+    """
+    if not os.path.exists(CHROMA_DIR) or not os.listdir(CHROMA_DIR):
+        return False
+    try:
+        embeddings = get_embeddings_model()
+        store = Chroma(
+            persist_directory=CHROMA_DIR,
+            embedding_function=embeddings,
+            collection_name=COLLECTION_NAME,
+        )
+        return store._collection.count() > 0
+    except Exception:
+        return False
 
 
 def load_existing_vector_store():
@@ -139,9 +158,13 @@ def answer_question(retriever, llm, question, history=None):
 
     system_message = SystemMessage(
         content=(
-            "Use the CONTEXT below if relevant. If the answer isn't in the context "
-            "and wasn't already established earlier in this conversation, say you "
-            "don't have that information. Do not make anything up.\n\nCONTEXT:\n"
+            "Use the CONTEXT below if relevant. If the user asks about a specific fact "
+            "that would need to come from a document (e.g. a policy, a number, a name) "
+            "and it isn't in the context or earlier in this conversation, say you don't "
+            "have that information rather than inventing one. "
+            "Math, calculations, and general-knowledge or reasoning questions are not "
+            "document facts -- answer those directly and correctly using your own "
+            "knowledge, whether or not the context is relevant to them.\n\nCONTEXT:\n"
             + context
         )
     )
